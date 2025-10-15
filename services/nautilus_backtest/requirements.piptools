@@ -1,0 +1,19 @@
+# Nautilus Trader
+nautilus_trader
+
+# Core Dependencies
+numpy
+pandas
+scipy
+pyarrow
+
+# ML/Statistics
+scikit-learn
+statsmodels
+
+# Redis for job management
+redis
+
+# Utilities
+python-dotenv
+tqdm

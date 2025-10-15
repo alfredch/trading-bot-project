@@ -1,0 +1,15 @@
+# Core
+redis
+psycopg2-binary
+
+# Data Processing
+numpy
+pandas
+pyarrow
+
+# Nautilus
+nautilus_trader
+
+# Utilities
+python-dotenv
+tqdm

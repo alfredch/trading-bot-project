@@ -1,0 +1,270 @@
+
+# Common configurations
+x-common-env: &common-env
+  POSTGRES_HOST: ${POSTGRES_HOST}
+  POSTGRES_PORT: ${POSTGRES_PORT}
+  POSTGRES_DB: ${POSTGRES_DB}
+  POSTGRES_USER: ${POSTGRES_USER}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+  REDIS_HOST: ${REDIS_HOST}
+  REDIS_PORT: ${REDIS_PORT}
+  LOG_LEVEL: ${LOG_LEVEL}
+
+x-python-base: &python-base
+  build:
+    args:
+      PYTHON_VERSION: ${PYTHON_VERSION:-3.12}
+  environment:
+    PYTHONUNBUFFERED: 1
+    PYTHONDONTWRITEBYTECODE: 1
+  networks:
+    - trading_bot_network
+  restart: unless-stopped
+
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: timescale/timescaledb:2.22.1-pg17
+    container_name: trading_bot_postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      PGDATA: ${PGDATA}
+      TZ: UTC
+    command: >
+      postgres
+      -c 'max_locks_per_transaction=1024'
+      -c 'shared_buffers=8GB'
+      -c max_worker_processes=16
+      -c max_parallel_workers=12
+      -c max_wal_size=12GB
+      -c max_parallel_workers_per_gather=4
+      -c max_parallel_maintenance_workers=4
+      -c listen_addresses='*'
+    volumes:
+      - /data/pgsql:/var/lib/postgresql/data    # externes Laufwerk
+      - ./config/db-init:/docker-entrypoint-initdb.d:ro
+      - ./data/logs/postgres:/var/log/postgresql
+    ports:
+      - "127.0.0.1:5432:5432"
+    networks:
+      - trading_bot_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB} -h 127.0.0.1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    logging: *default-logging
+    labels:
+      com.trading-bot.service: "database"
+      com.trading-bot.version: "${PROJECT_VERSION:-1.0.0}"
+
+  # Redis Cache & Queue
+  redis:
+    image: redis:7-alpine
+    container_name: trading_bot_redis
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory ${REDIS_MAXMEMORY:-2gb}
+      --maxmemory-policy allkeys-lru
+      --save 900 1
+      --save 300 10
+      --save 60 10000
+    volumes:
+      - trading_bot_redis_data:/data
+      - ./config/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    ports:
+      - "${REDIS_HOST_PORT:-6380}:6379"
+    networks:
+      - trading_bot_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+    logging: *default-logging
+    labels:
+      com.trading-bot.service: "cache"
+      com.trading-bot.version: "${PROJECT_VERSION:-1.0.0}"
+
+  # Data Pipeline Service
+  data_pipeline:
+    <<: *python-base
+    build:
+      context: ./services/data_pipeline
+      dockerfile: Dockerfile
+      args:
+        PYTHON_VERSION: ${PYTHON_VERSION:-3.12}
+    container_name: trading_bot_data_pipeline
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      <<: *common-env
+      CHUNK_SIZE: ${CHUNK_SIZE:-1000000}
+      SERVICE_NAME: data_pipeline
+      DATA_PATH: /data/parquet
+    volumes:
+      - ./services/data_pipeline/src:/app/src:ro
+      - ${PARQUET_PATH:-./data/parquet}:/data/parquet
+      - ${LOGS_PATH:-./data/logs}/data_pipeline:/app/logs
+    networks:
+      - trading_bot_network
+    profiles:
+      - pipeline
+    logging: *default-logging
+    labels:
+      com.trading-bot.service: "data-pipeline"
+      com.trading-bot.version: "${PROJECT_VERSION:-1.0.0}"
+
+  # Nautilus Backtest Service
+  nautilus_backtest:
+    <<: *python-base
+    build:
+      context: ./services/nautilus_backtest
+      dockerfile: Dockerfile
+      args:
+        PYTHON_VERSION: ${PYTHON_VERSION:-3.12}
+    container_name: trading_bot_nautilus
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      <<: *common-env
+      DATA_PATH: /data/parquet
+      RESULTS_PATH: /data/results
+      SERVICE_NAME: nautilus_backtest
+    volumes:
+      - ./services/nautilus_backtest/src:/app/src:ro
+      - ./services/nautilus_backtest/strategies:/app/strategies:ro
+      - ${PARQUET_PATH:-./data/parquet}:/data/parquet:ro
+      - ${RESULTS_PATH:-./data/results}:/data/results
+      - ${LOGS_PATH:-./data/logs}/nautilus:/app/logs
+    networks:
+      - trading_bot_network
+    profiles:
+      - backtest
+    logging: *default-logging
+    labels:
+      com.trading-bot.service: "backtest"
+      com.trading-bot.version: "${PROJECT_VERSION:-1.0.0}"
+
+  # API Service
+  api:
+    <<: *python-base
+    build:
+      context: ./services/api
+      dockerfile: Dockerfile
+      args:
+        PYTHON_VERSION: ${PYTHON_VERSION:-3.12}
+    container_name: trading_bot_api
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      <<: *common-env
+      API_HOST: ${API_HOST:-0.0.0.0}
+      API_PORT: ${API_PORT:-8010}
+      API_WORKERS: ${API_WORKERS:-2}
+      SERVICE_NAME: api
+    volumes:
+      - ./services/api/src:/app/src:ro
+      - ${PARQUET_PATH:-./data/parquet}:/data/parquet:ro
+      - ${RESULTS_PATH:-./data/results}:/data/results:ro
+      - ${LOGS_PATH:-./data/logs}/api:/app/logs
+    ports:
+      - "${API_HOST_PORT:-8010}:8000"
+    networks:
+      - trading_bot_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    logging: *default-logging
+    labels:
+      com.trading-bot.service: "api"
+      com.trading-bot.version: "${PROJECT_VERSION:-1.0.0}"
+
+  # Worker Service - Optimiert
+  worker:
+    <<: *python-base
+    build:
+      context: ./services/worker
+      dockerfile: Dockerfile
+      args:
+        PYTHON_VERSION: ${PYTHON_VERSION:-3.12}
+    # Kein fester container_name für Skalierung
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      <<: *common-env
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-4}
+      # Worker-ID wird automatisch aus PID generiert
+      # WORKER_NAME kann weggelassen werden
+      DATA_PATH: /data/parquet
+      RESULTS_PATH: /data/results
+      SERVICE_NAME: worker
+      JOB_MAX_RETRIES: ${JOB_MAX_RETRIES:-3}
+    volumes:
+      - ./services/worker/src:/app/src:ro
+      - ${PARQUET_PATH:-./data/parquet}:/data/parquet:ro
+      - ${RESULTS_PATH:-./data/results}:/data/results
+      - ${LOGS_PATH:-./data/logs}/worker:/app/logs
+    networks:
+      - trading_bot_network
+    deploy:
+      replicas: ${WORKER_REPLICAS:-2}
+    profiles:
+      - workers
+    logging: *default-logging
+    labels:
+      com.trading-bot.service: "worker"
+
+networks:
+  trading_bot_network:
+    name: trading_bot_network
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: trading_bot_br0
+    ipam:
+      driver: default
+      config:
+        - subnet: ${NETWORK_SUBNET:-172.28.0.0/16}
+          gateway: ${NETWORK_GATEWAY:-172.28.0.1}
+
+volumes:
+  trading_bot_postgres_data:
+    name: trading_bot_postgres_data
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/data/volumes/postgres
+
+  trading_bot_redis_data:
+    name: trading_bot_redis_data
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/data/volumes/redis
