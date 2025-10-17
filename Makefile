@@ -1,3 +1,5 @@
+include Makefile.monitoring
+
 .PHONY: help setup start stop restart logs ps clean test health scale
 
 COMPOSE_PROJECT_NAME := trading_bot

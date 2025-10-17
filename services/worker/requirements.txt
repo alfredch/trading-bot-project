@@ -4,30 +4,46 @@ click==8.3.0
     # via nautilus-trader
 fsspec==2025.9.0
     # via nautilus-trader
+iniconfig==2.1.0
+    # via pytest
 msgspec==0.19.0
     # via nautilus-trader
 nautilus-trader==1.220.0
     # via -r requirements.piptools
-numpy==2.3.3
+numpy==2.3.4
     # via
     #   -r requirements.piptools
     #   nautilus-trader
     #   pandas
+packaging==25.0
+    # via pytest
 pandas==2.3.3
     # via
     #   -r requirements.piptools
     #   nautilus-trader
+pluggy==1.6.0
+    # via pytest
 portion==2.6.1
     # via nautilus-trader
+prometheus-client==0.23.1
+    # via -r requirements.piptools
+psutil==7.1.0
+    # via -r requirements.piptools
 psycopg2-binary==2.9.11
     # via -r requirements.piptools
 pyarrow==21.0.0
     # via
     #   -r requirements.piptools
     #   nautilus-trader
+pygments==2.19.2
+    # via pytest
+pytest==8.4.2
+    # via -r requirements.piptools
 python-dateutil==2.9.0.post0
     # via pandas
 python-dotenv==1.1.1
+    # via -r requirements.piptools
+python-json-logger==4.0.0
     # via -r requirements.piptools
 pytz==2025.2
     # via

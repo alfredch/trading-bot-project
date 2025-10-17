@@ -13,3 +13,11 @@ nautilus_trader
 # Utilities
 python-dotenv
 tqdm
+
+# Monitoring & Metrics
+prometheus-client
+python-json-logger
+psutil
+
+# Testing
+pytest

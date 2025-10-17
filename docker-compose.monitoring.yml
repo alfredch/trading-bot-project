@@ -1,0 +1,154 @@
+
+# Monitoring Stack für Trading Bot
+# Usage: docker compose -f docker-compose.yml -f docker-compose.monitoring.yml up -d
+
+services:
+  # Prometheus - Metrics Collection
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: trading_bot_prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./config/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - trading_bot_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      com.trading-bot.service: "monitoring"
+
+  # Grafana - Visualization
+  grafana:
+    image: grafana/grafana:10.2.2
+    container_name: trading_bot_grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_INSTALL_PLUGINS=redis-datasource,redis-app
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=http://localhost:3000
+      - GF_ANALYTICS_REPORTING_ENABLED=false
+      - GF_ANALYTICS_CHECK_FOR_UPDATES=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./config/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    networks:
+      - trading_bot_network
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      com.trading-bot.service: "monitoring"
+
+  # AlertManager - Alert Handling
+  alertmanager:
+    image: prom/alertmanager:v0.26.0
+    container_name: trading_bot_alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+    volumes:
+      - ./config/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    ports:
+      - "9093:9093"
+    networks:
+      - trading_bot_network
+    restart: unless-stopped
+    labels:
+      com.trading-bot.service: "monitoring"
+
+  # Node Exporter - System Metrics
+  node_exporter:
+    image: prom/node-exporter:v1.7.0
+    container_name: trading_bot_node_exporter
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--path.rootfs=/rootfs'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    ports:
+      - "9100:9100"
+    networks:
+      - trading_bot_network
+    restart: unless-stopped
+    labels:
+      com.trading-bot.service: "monitoring"
+
+  # Redis Exporter - Redis Metrics
+  redis_exporter:
+    image: oliver006/redis_exporter:alpine   # <— Alpine-Variante verwenden
+    container_name: trading_bot_redis_exporter
+    environment:
+      - REDIS_ADDR=redis:6379
+    ports:
+      - "9121:9121"
+    networks:
+      - trading_bot_network
+    depends_on:
+      - redis
+    restart: unless-stopped
+    healthcheck:
+      # Readiness: Wird der Exporter Redis wirklich erreicht (Metrik redis_up 1)?
+      # (nutzt /bin/sh + wget aus Alpine)
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9121/metrics | grep -qE '^redis_up\\s+1(\\.0+)?\\b'"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 20s
+    labels:
+      com.trading-bot.service: "monitoring"
+
+  # Postgres Exporter - Database Metrics
+  postgres_exporter:
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    container_name: trading_bot_postgres_exporter
+    environment:
+      DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable"
+    ports:
+      - "9187:9187"
+    networks:
+      - trading_bot_network
+    depends_on:
+      - postgres
+    restart: unless-stopped
+    labels:
+      com.trading-bot.service: "monitoring"
+
+volumes:
+  prometheus_data:
+    name: trading_bot_prometheus_data
+  grafana_data:
+    name: trading_bot_grafana_data
+  alertmanager_data:
+    name: trading_bot_alertmanager_data
+
+networks:
+  trading_bot_network:
+    external: true

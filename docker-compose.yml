@@ -219,17 +219,19 @@ services:
     environment:
       <<: *common-env
       WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-4}
-      # Worker-ID wird automatisch aus PID generiert
-      # WORKER_NAME kann weggelassen werden
       DATA_PATH: /data/parquet
       RESULTS_PATH: /data/results
       SERVICE_NAME: worker
       JOB_MAX_RETRIES: ${JOB_MAX_RETRIES:-3}
+      WORKER_METRICS_PORT: 9191
     volumes:
       - ./services/worker/src:/app/src:ro
       - ${PARQUET_PATH:-./data/parquet}:/data/parquet:ro
       - ${RESULTS_PATH:-./data/results}:/data/results
       - ${LOGS_PATH:-./data/logs}/worker:/app/logs
+    # WICHTIG: Port Mapping hinzufügen!
+    ports:
+      - "9191-9199:9191"  # Ermöglicht mehrere Worker
     networks:
       - trading_bot_network
     deploy:

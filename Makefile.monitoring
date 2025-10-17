@@ -1,0 +1,140 @@
+# Add these targets to your existing Makefile
+# Or include this file: include Makefile.monitoring
+
+.PHONY: monitoring-setup monitoring-start monitoring-stop monitoring-status monitoring-dashboards
+
+# === Monitoring Commands ===
+
+monitoring-setup:
+	@echo "Setting up monitoring stack..."
+	@bash scripts/setup-monitoring.sh
+
+monitoring-start:
+	@echo "Starting monitoring stack..."
+	@$(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT_NAME) -f docker-compose.yml -f docker-compose.monitoring.yml up -d
+	@echo "✓ Monitoring services started"
+	@echo ""
+	@echo "Access points:"
+	@echo "  Grafana:      http://localhost:3000 (admin/admin)"
+	@echo "  Prometheus:   http://localhost:9090"
+	@echo "  AlertManager: http://localhost:9093"
+
+monitoring-stop:
+	@echo "Stopping monitoring services..."
+	@$(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT_NAME) stop prometheus grafana alertmanager node_exporter redis_exporter postgres_exporter
+
+monitoring-restart:
+	@$(MAKE) monitoring-stop
+	@$(MAKE) monitoring-start
+
+monitoring-status:
+	@echo "=== Monitoring Services Status ==="
+	@$(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT_NAME) ps prometheus grafana alertmanager node_exporter redis_exporter postgres_exporter
+	@echo ""
+	@echo "=== Health Checks ==="
+	@echo -n "Prometheus: " && curl -sf http://localhost:9090/-/healthy && echo "✓ Healthy" || echo "✗ Not responding"
+	@echo -n "Grafana:    " && curl -sf http://localhost:3000/api/health && echo "✓ Healthy" || echo "✗ Not responding"
+	@echo -n "API:        " && curl -sf http://localhost:8010/health && echo "✓ Healthy" || echo "✗ Not responding"
+
+monitoring-logs:
+ifdef service
+	@$(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT_NAME) logs -f --tail=100 $(service)
+else
+	@$(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT_NAME) logs -f --tail=50 prometheus grafana alertmanager
+endif
+
+monitoring-dashboards:
+	@echo "Opening Grafana dashboards..."
+	@echo "Main Dashboard: http://localhost:3000/d/trading-bot-main"
+	@xdg-open http://localhost:3000 2>/dev/null || open http://localhost:3000 2>/dev/null || echo "Please open http://localhost:3000 manually"
+
+# === Metrics & Alerts ===
+
+metrics-api:
+	@echo "=== API Metrics ==="
+	@curl -s http://localhost:8010/metrics | grep -v "^#" | head -20
+
+metrics-worker:
+	@echo "=== Worker Metrics (first worker) ==="
+	@curl -s http://localhost:9091/metrics 2>/dev/null | grep -v "^#" | head -20 || echo "No workers running"
+
+alerts-list:
+	@echo "=== Active Alerts ==="
+	@curl -s http://localhost:9093/api/v2/alerts | jq '.[] | {alertname: .labels.alertname, status: .status.state, since: .startsAt}'
+
+alerts-silence:
+ifdef alert
+	@echo "Silencing alert: $(alert)"
+	@curl -XPOST http://localhost:9093/api/v1/silences -d '{"matchers":[{"name":"alertname","value":"$(alert)"}],"startsAt":"'$$(date -u +%Y-%m-%dT%H:%M:%S.000Z)'","endsAt":"'$$(date -u -d '+1 hour' +%Y-%m-%dT%H:%M:%S.000Z)'","comment":"Silenced via Makefile"}'
+else
+	@echo "Usage: make alerts-silence alert=<alertname>"
+endif
+
+# === Quick Diagnostics ===
+
+diag-full:
+	@echo "========================================="
+	@echo "Trading Bot - Full System Diagnostics"
+	@echo "========================================="
+	@echo ""
+	@echo "=== Container Status ==="
+	@$(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT_NAME) ps
+	@echo ""
+	@echo "=== Service Health ==="
+	@curl -s http://localhost:8010/health | jq '.' || echo "API not responding"
+	@echo ""
+	@echo "=== Queue Status ==="
+	@docker exec trading_bot_redis redis-cli LLEN queue:migration | awk '{print "Migration Queue: " $$1}'
+	@docker exec trading_bot_redis redis-cli LLEN queue:backtest | awk '{print "Backtest Queue:  " $$1}'
+	@docker exec trading_bot_redis redis-cli LLEN queue:dlq | awk '{print "Dead Letter Queue: " $$1}'
+	@echo ""
+	@echo "=== Worker Status ==="
+	@docker exec trading_bot_redis redis-cli KEYS "worker:*:heartbeat" | wc -l | awk '{print "Active Workers: " $$1}'
+	@echo ""
+	@echo "=== Recent Jobs ==="
+	@curl -s http://localhost:8010/jobs?limit=5 | jq '.jobs[] | {job_id, status, progress}' 2>/dev/null || echo "No jobs found"
+	@echo ""
+	@echo "=== System Resources ==="
+	@docker stats --no-stream --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}" | head -10
+
+diag-errors:
+	@echo "=== Recent Errors (last 50 lines) ==="
+	@$(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT_NAME) logs --tail=50 | grep -i error || echo "No errors found"
+
+diag-performance:
+	@echo "=== Performance Metrics ==="
+	@echo ""
+	@echo "API Response Time (p95):"
+	@curl -s http://localhost:9090/api/v1/query?query=histogram_quantile\(0.95,rate\(http_request_duration_seconds_bucket[5m]\)\) | jq -r '.data.result[0].value[1]' | awk '{printf "%.3f seconds\n", $$1}'
+	@echo ""
+	@echo "Job Processing Rate (jobs/min):"
+	@curl -s http://localhost:9090/api/v1/query?query=sum\(rate\(worker_jobs_processed_total{status=\"success\"}[5m]\)\)*60 | jq -r '.data.result[0].value[1]' | awk '{printf "%.2f jobs/min\n", $$1}'
+	@echo ""
+	@echo "Average Job Duration:"
+	@curl -s http://localhost:9090/api/v1/query?query=avg\(worker_job_duration_seconds\) | jq -r '.data.result[0].value[1]' | awk '{printf "%.2f seconds\n", $$1}'
+
+# === Production Readiness Checks ===
+
+prod-check:
+	@echo "========================================="
+	@echo "Production Readiness Check"
+	@echo "========================================="
+	@echo ""
+	@bash scripts/production-check.sh
+
+prod-optimize:
+	@echo "Applying production optimizations..."
+	@echo ""
+	@echo "1. Checking resource limits..."
+	@grep -q "WORKER_MEMORY_LIMIT" .env && echo "✓ Worker memory limits configured" || echo "⚠ Add WORKER_MEMORY_LIMIT to .env"
+	@echo ""
+	@echo "2. Checking logging configuration..."
+	@grep -q "LOG_FORMAT=json" .env && echo "✓ JSON logging enabled" || echo "⚠ Set LOG_FORMAT=json in .env"
+	@echo ""
+	@echo "3. Checking monitoring..."
+	@docker ps | grep -q prometheus && echo "✓ Monitoring stack running" || echo "⚠ Start monitoring with: make monitoring-start"
+	@echo ""
+	@echo "4. Checking backups..."
+	@test -d data/backups && echo "✓ Backup directory exists" || echo "⚠ Create backups with: make backup"
+
+.SILENT: monitoring-setup monitoring-start monitoring-stop monitoring-status metrics-api metrics-worker alerts-list diag-full diag-errors diag-performance prod-check prod-optimize

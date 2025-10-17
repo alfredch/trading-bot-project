@@ -1,5 +1,5 @@
 """
-Enhanced Worker with job processing - Production Ready
+Enhanced Worker with job processing
 """
 import os
 import sys
@@ -8,7 +8,7 @@ import signal
 import logging
 import json
 from typing import Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import redis
 
@@ -21,14 +21,6 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
-
-# Try to import metrics (optional)
-try:
-    from .metrics import WorkerMetrics
-    METRICS_AVAILABLE = True
-except ImportError:
-    METRICS_AVAILABLE = False
-    logger.warning("Metrics module not available - continuing without metrics")
 
 
 class EnhancedWorker:
@@ -44,23 +36,7 @@ class EnhancedWorker:
         # Configuration
         self.max_retries = int(os.getenv('JOB_MAX_RETRIES', 3))
         self.heartbeat_interval = int(os.getenv('WORKER_HEARTBEAT_INTERVAL', 30))
-        self.metrics_interval = int(os.getenv('WORKER_METRICS_INTERVAL', 60))
         self.brpop_timeout = 5  # Sekunden
-
-        # Initialize metrics if available
-        if METRICS_AVAILABLE:
-            try:
-                self.metrics = WorkerMetrics(
-                    worker_id=self.worker_id,
-                    port=int(os.getenv('WORKER_METRICS_PORT', 9091))
-                )
-                self.metrics.start_metrics_server()
-                logger.info(f"Metrics server started on port {self.metrics.port}")
-            except Exception as e:
-                logger.warning(f"Failed to start metrics server: {e}")
-                self.metrics = None
-        else:
-            self.metrics = None
 
         # Redis connection mit angepassten Timeouts
         self.redis = redis.Redis(
@@ -90,15 +66,12 @@ class EnhancedWorker:
         """Graceful shutdown handler"""
         logger.info(f"Received shutdown signal {signum}")
         self.running = False
-        if self.metrics:
-            self.metrics.shutdown()
 
     def process_jobs(self):
         """Main worker loop"""
         logger.info(f"Worker {self.worker_id} started. Waiting for jobs...")
 
         last_heartbeat = time.time()
-        last_metrics_update = time.time()
         jobs_processed = 0
         consecutive_errors = 0
 
@@ -108,11 +81,6 @@ class EnhancedWorker:
                 if time.time() - last_heartbeat > self.heartbeat_interval:
                     self._update_heartbeat()
                     last_heartbeat = time.time()
-
-                # Update queue metrics
-                if time.time() - last_metrics_update > self.metrics_interval:
-                    self._update_queue_metrics()
-                    last_metrics_update = time.time()
 
                 # Wait for jobs - BRPOP blockiert bis Job verfügbar oder Timeout
                 job_data = self.redis.brpop(
@@ -140,10 +108,6 @@ class EnhancedWorker:
                 success = self._process_job(job_id)
                 duration = time.time() - start_time
 
-                # Get job type for metrics
-                job_info = self.redis.hgetall(f"job:{job_id}")
-                job_type = job_info.get('type', 'unknown')
-
                 if success:
                     self._update_job_status(
                         job_id,
@@ -152,15 +116,7 @@ class EnhancedWorker:
                         f'Completed in {duration:.2f}s'
                     )
                     jobs_processed += 1
-
-                    # Record metrics
-                    if self.metrics:
-                        self.metrics.record_job_complete(job_type, duration, True)
-
                     logger.info(f"Job {job_id} completed successfully in {duration:.2f}s")
-                else:
-                    if self.metrics:
-                        self.metrics.record_job_complete(job_type, duration, False)
 
                 self.current_job_id = None
 
@@ -170,8 +126,6 @@ class EnhancedWorker:
 
             except redis.exceptions.ConnectionError as e:
                 consecutive_errors += 1
-                if self.metrics:
-                    self.metrics.record_error('redis_connection')
                 logger.error(f"Redis connection error (attempt {consecutive_errors}): {e}")
 
                 # Bei wiederholten Connection-Errors länger warten
@@ -191,8 +145,6 @@ class EnhancedWorker:
 
             except Exception as e:
                 consecutive_errors += 1
-                if self.metrics:
-                    self.metrics.record_error('unexpected')
                 logger.error(
                     f"Unexpected error in worker loop (attempt {consecutive_errors}): {e}",
                     exc_info=True
@@ -289,8 +241,6 @@ class EnhancedWorker:
         """Handle job failure"""
         try:
             retry_count = int(self.redis.hget(f"job:{job_id}", 'retry_count') or 0)
-            job_info = self.redis.hgetall(f"job:{job_id}")
-            job_type = job_info.get('type', 'unknown')
 
             if retry_count < self.max_retries:
                 self.redis.hincrby(f"job:{job_id}", 'retry_count', 1)
@@ -303,11 +253,9 @@ class EnhancedWorker:
                 )
 
                 # Requeue
+                job_info = self.redis.hgetall(f"job:{job_id}")
+                job_type = job_info.get('type')
                 self.redis.lpush(f'queue:{job_type}', job_id)
-
-                # Record metrics
-                if self.metrics:
-                    self.metrics.record_job_retry(job_type, retry_count + 1)
 
                 logger.warning(f"Job {job_id} scheduled for retry {retry_count + 1}")
             else:
@@ -318,11 +266,6 @@ class EnhancedWorker:
                     f'Failed after {self.max_retries} retries: {error_message}'
                 )
                 self.redis.lpush('queue:dlq', job_id)
-
-                # Record metrics
-                if self.metrics:
-                    self.metrics.record_dlq_move(job_type, 'max_retries_exceeded')
-
                 logger.error(f"Job {job_id} moved to DLQ")
 
         except Exception as e:
@@ -359,29 +302,5 @@ class EnhancedWorker:
                 60,
                 datetime.utcnow().isoformat()
             )
-            if self.metrics:
-                self.metrics.update_heartbeat()
         except Exception as e:
             logger.error(f"Error updating heartbeat: {e}")
-
-    def _update_queue_metrics(self):
-        """Update queue length metrics"""
-        if not self.metrics:
-            return
-
-        try:
-            for queue_name in ['migration', 'backtest', 'dlq']:
-                length = self.redis.llen(f'queue:{queue_name}')
-                self.metrics.update_queue_length(queue_name, length)
-        except Exception as e:
-            logger.error(f"Error updating queue metrics: {e}")
-
-
-def main():
-    """Worker entry point"""
-    worker = EnhancedWorker()
-    worker.process_jobs()
-
-
-if __name__ == "__main__":
-    main()

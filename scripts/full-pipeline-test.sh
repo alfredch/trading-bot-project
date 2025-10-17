@@ -1,5 +1,6 @@
-# scripts/full-pipeline-test.sh
 #!/bin/bash
+
+# scripts/full-pipeline-test.sh
 
 set -e
 

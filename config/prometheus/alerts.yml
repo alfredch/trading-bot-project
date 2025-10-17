@@ -1,0 +1,181 @@
+groups:
+  - name: trading_bot_alerts
+    interval: 30s
+    rules:
+      # Service Health Alerts
+      - alert: ServiceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Service {{ $labels.job }} is down"
+          description: "{{ $labels.job }} has been down for more than 1 minute."
+
+      - alert: HighErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate on {{ $labels.job }}"
+          description: "Error rate is {{ $value }} errors/sec"
+
+      # Worker Alerts
+      - alert: NoWorkersAvailable
+        expr: sum(worker_active) == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No workers are running"
+          description: "All workers appear to be down or not responding"
+
+      - alert: WorkerQueueBacklog
+        expr: redis_list_length{list="queue:migration"} > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Large job queue backlog"
+          description: "Queue has {{ $value }} pending jobs"
+
+      - alert: HighJobFailureRate
+        expr: rate(job_failures_total[10m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High job failure rate"
+          description: "{{ $value }} jobs failing per second"
+
+      - alert: DeadLetterQueueGrowing
+        expr: redis_list_length{list="queue:dlq"} > 10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Dead letter queue is growing"
+          description: "DLQ has {{ $value }} failed jobs"
+
+      # Database Alerts
+      - alert: PostgresDown
+        expr: pg_up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PostgreSQL is down"
+          description: "Database connection failed"
+
+      - alert: HighDatabaseConnections
+        expr: pg_stat_database_numbackends > 180
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High number of database connections"
+          description: "{{ $value }} connections active (limit: 200)"
+
+      - alert: SlowQueries
+        expr: rate(pg_stat_database_tup_fetched[5m]) / rate(pg_stat_database_tup_returned[5m]) < 0.8
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Slow database queries detected"
+          description: "Query efficiency has dropped to {{ $value }}"
+
+      # Redis Alerts
+      - alert: RedisDown
+        expr: redis_up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redis is down"
+          description: "Redis connection failed"
+
+      - alert: RedisMemoryHigh
+        expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis memory usage high"
+          description: "Redis is using {{ $value | humanizePercentage }} of available memory"
+
+      - alert: RedisHighConnectionCount
+        expr: redis_connected_clients > 90
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High number of Redis connections"
+          description: "{{ $value }} clients connected"
+
+      # System Resource Alerts
+      - alert: HighCPUUsage
+        expr: 100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage on {{ $labels.instance }}"
+          description: "CPU usage is {{ $value }}%"
+
+      - alert: HighMemoryUsage
+        expr: (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage on {{ $labels.instance }}"
+          description: "Memory usage is {{ $value }}%"
+
+      - alert: DiskSpaceLow
+        expr: (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100 < 15
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low disk space on {{ $labels.instance }}"
+          description: "Only {{ $value }}% disk space remaining"
+
+      # API Performance Alerts
+      - alert: HighAPILatency
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High API latency"
+          description: "95th percentile latency is {{ $value }}s"
+
+      - alert: HighAPIRequestRate
+        expr: rate(http_requests_total[1m]) > 100
+        for: 5m
+        labels:
+          severity: info
+        annotations:
+          summary: "High API request rate"
+          description: "API receiving {{ $value }} requests/sec"
+
+      # Backtest Alerts
+      - alert: BacktestTakingTooLong
+        expr: job_duration_seconds{type="backtest"} > 3600
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Backtest taking unusually long"
+          description: "Backtest {{ $labels.job_id }} has been running for {{ $value }}s"
+
+      - alert: HighBacktestFailureRate
+        expr: rate(backtest_failures_total[30m]) > 0.2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High backtest failure rate"
+          description: "{{ $value }} backtests failing per second"
