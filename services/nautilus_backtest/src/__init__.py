@@ -1,10 +1,21 @@
 """
-Nautilus Backtest Service
+Nautilus Backtest Service - Source Package
 """
-__version__ = '1.0.0'
-from .report_generator import ReportGenerator
-from .results_analyzer import ResultsAnalyzer
+
+# Core components
 from .config import BacktestConfig
 from .data_loader import ParquetDataLoader
+from .backtest_engine import BacktestEngine
 
-__all__ = ['ReportGenerator', 'ResultsAnalyzer', 'BacktestConfig', 'ParquetDataLoader']
+# Optional: Nautilus runner (may not be available during initial import)
+try:
+    from .nautilus_runner import NautilusBacktestRunner
+except ImportError:
+    NautilusBacktestRunner = None
+
+__all__ = [
+    'BacktestConfig',
+    'ParquetDataLoader',
+    'BacktestEngine',
+    'NautilusBacktestRunner'
+]

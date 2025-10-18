@@ -1,19 +1,25 @@
-# Nautilus Trader
-nautilus_trader
+# Nautilus Backtest Service Dependencies
+# Core Trading Framework
+nautilus-trader
 
-# Core Dependencies
-numpy
+# Data Processing
 pandas
-scipy
+numpy
 pyarrow
 
-# ML/Statistics
+# Machine Learning / Indicators
 scikit-learn
+scipy
 statsmodels
 
-# Redis for job management
+# Redis Communication
 redis
 
-# Utilities
+# Configuration
 python-dotenv
+
+# Performance
 tqdm
+
+# Development
+click

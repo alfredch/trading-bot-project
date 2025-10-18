@@ -8,6 +8,7 @@ anyio==4.11.0
     #   watchfiles
 click==8.3.0
     # via
+    #   -r requirements.piptools
     #   nautilus-trader
     #   uvicorn
 fastapi==0.119.0
@@ -52,7 +53,7 @@ pyarrow==21.0.0
     # via
     #   -r requirements.piptools
     #   nautilus-trader
-pydantic==2.12.2
+pydantic==2.12.3
     # via
     #   -r requirements.piptools
     #   fastapi
@@ -119,7 +120,7 @@ tzdata==2025.2
     # via pandas
 uvicorn==0.37.0
     # via -r requirements.piptools
-uvloop==0.21.0
+uvloop==0.22.1
     # via
     #   nautilus-trader
     #   uvicorn

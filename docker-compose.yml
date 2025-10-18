@@ -133,35 +133,34 @@ services:
 
   # Nautilus Backtest Service
   nautilus_backtest:
-    <<: *python-base
     build:
-      context: ./services/nautilus_backtest
-      dockerfile: Dockerfile
-      args:
-        PYTHON_VERSION: ${PYTHON_VERSION:-3.12}
-    container_name: trading_bot_nautilus
-    depends_on:
-      redis:
-        condition: service_healthy
+      context: .
+      dockerfile: services/nautilus_backtest/Dockerfile
+    container_name: nautilus_backtest
+
+    # Alternative: Use this instead if you want more restrictive
+    # cap_add:
+    #   - SYS_PTRACE
+
     environment:
-      <<: *common-env
-      DATA_PATH: /data/parquet
-      RESULTS_PATH: /data/results
-      SERVICE_NAME: nautilus_backtest
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - DATA_PATH=/data/parquet
+      - RESULTS_PATH=/data/results
+      - LOG_LEVEL=INFO
+
     volumes:
-      - ./services/nautilus_backtest/src:/app/src:ro
-      - ./services/nautilus_backtest/strategies:/app/strategies:ro
-      - ${PARQUET_PATH:-./data/parquet}:/data/parquet:ro
-      - ${RESULTS_PATH:-./data/results}:/data/results
-      - ${LOGS_PATH:-./data/logs}/nautilus:/app/logs
+      - ./data/parquet:/data/parquet:ro
+      - ./data/results:/data/results
+      - ./data/logs/nautilus:/app/logs
+
+    depends_on:
+      - redis
+
     networks:
       - trading_bot_network
-    profiles:
-      - backtest
-    logging: *default-logging
-    labels:
-      com.trading-bot.service: "backtest"
-      com.trading-bot.version: "${PROJECT_VERSION:-1.0.0}"
+
+    restart: unless-stopped
 
   # API Service
   api:

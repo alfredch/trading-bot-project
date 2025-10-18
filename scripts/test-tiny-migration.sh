@@ -22,7 +22,7 @@ echo
 
 # Check services
 echo "Checking services..."
-if ! curl -sf http://localhost:8000/health > /dev/null; then
+if ! curl -sf http://localhost:8010/health > /dev/null; then
     echo "❌ API not running. Start with: make start"
     exit 1
 fi
@@ -37,7 +37,7 @@ sleep 3
 # Submit job
 echo
 echo "Submitting migration job..."
-RESPONSE=$(curl -s -X POST http://localhost:8000/jobs/migrate \
+RESPONSE=$(curl -s -X POST http://localhost:8010/jobs/migrate \
   -H "Content-Type: application/json" \
   -d "{
     \"run_id\": $RUN_ID,

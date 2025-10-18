@@ -1,5 +1,5 @@
 """
-Nautilus Backtest Engine
+Nautilus Backtest Engine - WITH REAL NAUTILUS INTEGRATION
 """
 import logging
 import json
@@ -11,14 +11,16 @@ from pathlib import Path
 
 import redis
 
-from src.config import BacktestConfig
-from src.data_loader import ParquetDataLoader
+# ✅ Korrekte Imports (ohne 'services.nautilus_backtest.src')
+from config import BacktestConfig
+from data_loader import ParquetDataLoader
+from nautilus_runner import NautilusBacktestRunner
 
 logger = logging.getLogger(__name__)
 
 
 class BacktestEngine:
-    """Engine for processing backtest jobs"""
+    """Engine for processing backtest jobs with real Nautilus Trader"""
 
     def __init__(self):
         """Initialize backtest engine"""
@@ -37,11 +39,14 @@ class BacktestEngine:
         # Data loader
         self.data_loader = ParquetDataLoader(self.config.DATA_PATH)
 
+        # Nautilus runner
+        self.nautilus_runner = NautilusBacktestRunner()
+
         # Signal handlers
         signal.signal(signal.SIGTERM, self._handle_shutdown)
         signal.signal(signal.SIGINT, self._handle_shutdown)
 
-        logger.info("Backtest engine initialized")
+        logger.info("Backtest engine initialized with Nautilus Trader")
 
     def _handle_shutdown(self, signum, frame):
         """Handle shutdown signal"""
@@ -85,7 +90,7 @@ class BacktestEngine:
                 self.current_job_id = None
 
             except redis.exceptions.TimeoutError:
-                # Normal - kein Job verfügbar
+                # Normal - no job available
                 continue
 
             except Exception as e:
@@ -129,7 +134,7 @@ class BacktestEngine:
             end_date = strategy_config.get('end_date')
             config = strategy_config.get('config', {})
 
-            # Build instrument identifier (same format as migration)
+            # Build instrument identifier
             instrument = f"RUN{run_id}_INST{instrument_id}"
 
             logger.info(
@@ -154,7 +159,7 @@ class BacktestEngine:
 
             self._update_job_status(job_id, 'running', 30, 'Preparing backtest...')
 
-            # Run backtest
+            # Run REAL Nautilus backtest
             results = self._run_nautilus_backtest(
                 strategy_name=strategy_name,
                 instrument=instrument,
@@ -171,7 +176,8 @@ class BacktestEngine:
                 'run_id': run_id,
                 'instrument_id': instrument_id,
                 'start_date': start_date,
-                'end_date': end_date
+                'end_date': end_date,
+                'config': config
             })
 
             self._update_job_status(job_id, 'running', 90, 'Saving results...')
@@ -194,12 +200,12 @@ class BacktestEngine:
         job_id: str
     ) -> Dict[str, Any]:
         """
-        Run Nautilus backtest
+        Run REAL Nautilus backtest
 
         Args:
             strategy_name: Name of strategy
             instrument: Instrument identifier
-            data: Market data
+            data: Market data (DataFrame)
             config: Strategy configuration
             job_id: Job ID for progress updates
 
@@ -207,57 +213,72 @@ class BacktestEngine:
             Backtest results
         """
         try:
-            # TODO: Implement actual Nautilus backtest
-            # For now, mock implementation
+            self._update_job_status(job_id, 'running', 40, 'Initializing Nautilus...')
 
-            logger.info(f"Running backtest with {len(data):,} ticks")
+            # Import strategy class
+            from strategies.mean_reversion_nw import MeanReversionNWStrategy
 
-            # Simulate backtest phases
-            phases = [
-                (40, 'Initializing strategy...'),
-                (50, 'Processing data...'),
-                (60, 'Executing trades...'),
-                (70, 'Calculating PnL...'),
-                (80, 'Generating metrics...')
-            ]
-
-            for progress, message in phases:
-                self._update_job_status(job_id, 'running', progress, message)
-                time.sleep(1)  # Simulate work
-
-            # Mock results
-            results = {
-                'total_trades': 42,
-                'winning_trades': 28,
-                'losing_trades': 14,
-                'win_rate': 66.67,
-                'total_pnl': 12500.00,
-                'gross_profit': 15000.00,
-                'gross_loss': -2500.00,
-                'avg_trade': 297.62,
-                'avg_win': 535.71,
-                'avg_loss': -178.57,
-                'profit_factor': 6.00,
-                'max_drawdown': -2100.00,
-                'max_drawdown_pct': -2.10,
-                'sharpe_ratio': 1.85,
-                'ticks_processed': len(data),
-                'execution_time': time.time(),
-                'config': config
+            strategy_map = {
+                'mean_reversion_nw': MeanReversionNWStrategy,
+                'MeanReversionNWStrategy': MeanReversionNWStrategy
             }
+
+            strategy_class = strategy_map.get(strategy_name)
+
+            if not strategy_class:
+                raise ValueError(f"Unknown strategy: {strategy_name}")
+
+            logger.info(f"Using strategy: {strategy_class.__name__}")
+
+            self._update_job_status(job_id, 'running', 50, 'Loading data into Nautilus...')
+
+            # Run backtest with Nautilus
+            results = self.nautilus_runner.run_backtest(
+                strategy_class=strategy_class,
+                strategy_config=config,
+                data=data,
+                instrument_id_str=instrument,
+                initial_capital=config.get('initial_capital', 100_000.0)
+            )
+
+            self._update_job_status(job_id, 'running', 80, 'Backtest completed, processing results...')
+
+            logger.info(f"Nautilus backtest completed: {results.get('total_trades', 0)} trades")
 
             return results
 
-        except ImportError:
-            logger.warning("Nautilus Trader not fully configured, using mock backtest")
+        except ImportError as e:
+            logger.error(f"Import error - Nautilus not available: {e}", exc_info=True)
+            return self._fallback_mock_backtest(data, config)
 
-            # Basic mock results
-            return {
-                'status': 'mock',
-                'message': 'Mock backtest - Nautilus not configured',
-                'ticks_processed': len(data),
-                'config': config
-            }
+        except Exception as e:
+            logger.error(f"Nautilus backtest error: {e}", exc_info=True)
+            raise
+
+    def _fallback_mock_backtest(self, data: Any, config: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Fallback mock backtest if Nautilus fails
+
+        Args:
+            data: Market data
+            config: Strategy config
+
+        Returns:
+            Mock results
+        """
+        logger.warning("Using MOCK backtest - Nautilus integration failed")
+
+        return {
+            'status': 'mock',
+            'message': 'Mock backtest - Nautilus integration error',
+            'ticks_processed': len(data),
+            'total_trades': 0,
+            'winning_trades': 0,
+            'losing_trades': 0,
+            'win_rate': 0.0,
+            'total_pnl': 0.0,
+            'config': config
+        }
 
     def _save_results(self, job_id: str, results: Dict[str, Any]):
         """Save backtest results"""
@@ -269,13 +290,13 @@ class BacktestEngine:
             results_file = results_path / f"{job_id}.json"
 
             with open(results_file, 'w') as f:
-                json.dump(results, f, indent=2)
+                json.dump(results, f, indent=2, default=str)
 
             # Save to Redis
             self.redis.hset(
                 f"job:{job_id}",
                 'results',
-                json.dumps(results)
+                json.dumps(results, default=str)
             )
 
             logger.info(f"Results saved to {results_file}")

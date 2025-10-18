@@ -6,7 +6,8 @@ import sys
 import os
 import logging
 
-# Add app directory to Python path
+# Add src directory to Python path for relative imports
+sys.path.insert(0, '/app/src')
 sys.path.insert(0, '/app')
 
 # Setup logging
@@ -25,8 +26,8 @@ def main():
     try:
         logger.info("Nautilus Backtest Service starting...")
 
-        # Import backtest engine
-        from src.backtest_engine import BacktestEngine
+        # Import backtest engine (from src directory)
+        from backtest_engine import BacktestEngine
 
         # Create and start engine
         engine = BacktestEngine()
@@ -34,6 +35,9 @@ def main():
 
     except ImportError as e:
         logger.error(f"Import error: {e}", exc_info=True)
+        logger.error("Python path:")
+        for p in sys.path:
+            logger.error(f"  - {p}")
         sys.exit(1)
     except KeyboardInterrupt:
         logger.info("Backtest service interrupted by user")

@@ -12,7 +12,7 @@ msgspec==0.19.0
     # via nautilus-trader
 nautilus-trader==1.220.0
     # via -r requirements.piptools
-numpy==2.3.3
+numpy==2.3.4
     # via
     #   -r requirements.piptools
     #   nautilus-trader
@@ -67,5 +67,5 @@ tqdm==4.67.1
     #   nautilus-trader
 tzdata==2025.2
     # via pandas
-uvloop==0.21.0
+uvloop==0.22.1
     # via nautilus-trader

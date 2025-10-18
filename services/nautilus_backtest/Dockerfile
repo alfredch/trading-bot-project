@@ -3,7 +3,7 @@ FROM python:${PYTHON_VERSION}-slim
 
 WORKDIR /app
 
-# Install system dependencies including build tools for Nautilus
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     build-essential \
     libpq-dev \
@@ -18,8 +18,23 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
-COPY . .
+# FIX: Remove executable stack flag
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends patchelf findutils; \
+    for so in $(find /usr/local/lib -type f -path "*/site-packages/nautilus_trader/backtest/engine*.so"); do \
+        echo "Clearing execstack on: $so"; \
+        patchelf --clear-execstack "$so"; \
+    done; \
+    apt-get purge -y --auto-remove patchelf; \
+    rm -rf /var/lib/apt/lists/*
+
+# Copy application code from correct paths (relative to project root)
+COPY services/nautilus_backtest/src/ /app/src/
+COPY services/nautilus_backtest/strategies/ /app/strategies/
+
+# Setup Python path
+ENV PYTHONPATH=/app:/app/src
 
 # Create non-root user
 RUN useradd -m -u 1000 appuser && \

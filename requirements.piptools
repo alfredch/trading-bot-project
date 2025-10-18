@@ -4,21 +4,8 @@ uvicorn[standard]
 pydantic
 pydantic-settings
 
-# Redis
-redis
-
 # Utilities
-python-dotenv
 python-multipart
-
-# Nautilus Trader
-nautilus_trader
-
-# Core Dependencies
-numpy
-pandas
-scipy
-pyarrow
 
 # ML/Statistics
 scikit-learn
@@ -26,7 +13,32 @@ statsmodels
 
 # Utilities
 python-dotenv
-tqdm
 
 prometheus_client
 python-json-logger
+
+# Nautilus Backtest Service Dependencies
+# Core Trading Framework
+nautilus-trader
+
+# Data Processing
+pandas
+numpy
+pyarrow
+
+# Machine Learning / Indicators
+scikit-learn
+scipy
+statsmodels
+
+# Redis Communication
+redis
+
+# Configuration
+python-dotenv
+
+# Performance
+tqdm
+
+# Development
+click
